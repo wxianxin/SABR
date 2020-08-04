@@ -24,7 +24,7 @@ def import_data(file_name):
 
 ################################################################################
 # BS IV
-def BS_call(S, K, tau, r, sigma):
+def BS_call(S, K, tau, r, sigma):  # included in quantool
     """Calculate Call option price based BS.
     Args:
         S (float): Spot price
@@ -42,25 +42,36 @@ def BS_call(S, K, tau, r, sigma):
     return call_price
 
 
-def IV_objective_func(sigma, S, K, tau, r, price):
-    """Objective function used for optimization in getting Implied Volatility.
-    """
-    result = (price - BS_call(S, K, tau, r, sigma)) ** 2
-    return result
+def BS_IV(sigma_0, S, K, tau, r, price):  # included in quantool
+    """Get implied volatility through optimization"""
 
+    def IV_objective_func(sigma, S, K, tau, r, price):
+        """Objective function used for optimization in getting Implied Volatility."""
+        result = (price - BS_call(S, K, tau, r, sigma)) ** 2
+        return result
 
-def BS_IV(sigma_0, S, K, tau, r, price):
-    bnds = ((0, None),)
-    # brent is the better method
-    opt_result = optimize.brent(IV_objective_func, args=(S, K, tau, r, price))
-
-    return opt_result
+    # Brent method seems to be the proper method
+    optimal_iv = optimize.brent(
+        IV_objective_func, args=(S, K, tau, r, price), brack=(0.1, 1)
+    )
+    if (BS_call(S, K, tau, r, optimal_iv) - price) / price > 1e-4:
+        print(
+            f"tau: {tau}; Relative diff:"
+            f" {(BS_call(S, K, tau, r, optimal_iv) - price) / price}"
+        )
+    return optimal_iv
+    # # Nelder-Mead
+    # optimal_iv = optimize.minimize(IV_objective_func, sigma_0, args=(S, K, tau, r, price), options={"disp": True})
+    # #
+    # bounds = ((0.001, None),)
+    # optimal_iv = optimize.minimize(IV_objective_func, sigma_0, args=(S, K, tau, r, price), bounds=bounds, options={"disp": True})
+    # return optimal_iv.x[0]
 
 
 ################################################################################
 # Get Implied Volatility Surface
 # !!!!!!!!!!!!!!!!! IV not correct
-def get_IV(S, r, df):
+def get_iv_list(S, r, df):
     """
     Args:
         S (float): Spot price
@@ -101,7 +112,8 @@ def sabr_vol(alpha, beta, rho, nu, spot_price, K, tau):
     D = math.log(((1 - 2 * rho * zeta + zeta ** 2) ** 0.5 + zeta - rho) / (1 - rho))
     if D == 0:
         print(
-            "!!!!!!D is 0; it could be that the spot price is too close to strike price!!!"
+            "!!!!!!D is 0; it could be that the spot price is too close to strike"
+            " price!!!"
         )
         print(spot_price ** (1 - beta) - K ** (1 - beta))
         print(zeta)
@@ -123,33 +135,32 @@ def sabr_vol(alpha, beta, rho, nu, spot_price, K, tau):
     return sigma
 
 
-def sabr_obj_func(params, S, df, IV_list):
-    alpha, beta, rho, nu = params
-    summ = 0
-    for i in range(len(IV_list)):
-        spot_price = S
-        tau = df.iloc[i]["tau"]
-        K = df.iloc[i]["strike"]
-        call_price = df.iloc[i]["price"]
-
-        e = (sabr_vol(alpha, beta, rho, nu, spot_price, K, tau) - IV_list[i]) ** 2
-        # if math.isnan(e):
-        # why 100 not 0? After compare the 0 and 100, 100 'feels' better
-        #   e = 100
-        summ += e
-
-    print("sum = ", summ)
-    return summ
-
-
-def get_sabr_params(S, df, IV_list):
+def get_sabr_params(S, df, iv_list):
     # improve initial Guess
+    def sabr_obj_func(params, S, df, iv_list):
+        alpha, beta, rho, nu = params
+        summ = 0
+        for i in range(len(iv_list)):
+            spot_price = S
+            tau = df.iloc[i]["tau"]
+            K = df.iloc[i]["strike"]
+            call_price = df.iloc[i]["price"]
+
+            e = (sabr_vol(alpha, beta, rho, nu, spot_price, K, tau) - iv_list[i]) ** 2
+            # if math.isnan(e):
+            # why 100 not 0? After compare the 0 and 100, 100 'feels' better
+            #   e = 100
+            summ += e
+
+        print(f"sum = {summ}; Relative residual: {summ / sum(iv_list)}")
+        return summ
+
     initial_guess = [0.0001, 0.5, 0, 0.0001]
     bnds = (0.0001, None), (0, 1), (-0.9999, 0.9999), (0.0001, 0.9999)
     sabr_params = optimize.minimize(
         sabr_obj_func,
         x0=initial_guess,
-        args=(S, df, IV_list),
+        args=(S, df, iv_list),
         bounds=bnds,
         method="SLSQP",
         options={"eps": 0.001},
@@ -160,10 +171,8 @@ def get_sabr_params(S, df, IV_list):
 
 #################################################################################
 ## Get sabr volatility
-#################################################################################
 def get_sabr_vol_surface(params, spot_price, tt, kk):
-    """Get surface vol of given tau and K
-    """
+    """Get surface vol of given tau and K"""
     alpha, beta, rho, nu = params
     spot_price = spot_price
     sabr_vol_list = []
@@ -178,10 +187,8 @@ def get_sabr_vol_surface(params, spot_price, tt, kk):
 
 #################################################################################
 ## Get sabr volatility 1
-#################################################################################
-def get_sabr_vol_surface_1(params, spot_price, df):
-    """Get a list of vol of original data
-    """
+def get_sabr_vol_surface_from_df(params, spot_price, df):
+    """Get a list of vol of original data"""
     alpha, beta, rho, nu = params
     spot_price = spot_price
     sabr_vol_list = []
@@ -195,8 +202,7 @@ def get_sabr_vol_surface_1(params, spot_price, df):
 
 ################################################################################
 # Plot volatility surface
-################################################################################
-def volatility_surface(spot_price, kk, tt, z):
+def plot_volatility_surface(spot_price, kk, tt, z):
     # kk = [x/spot_price for x in kk]
     fig = plt.figure()
     ax = fig.gca(projection="3d")
@@ -208,7 +214,6 @@ def volatility_surface(spot_price, kk, tt, z):
 
 ################################################################################
 # Plot comparison of volatility surface
-################################################################################
 def volatility_surface_comparison(kk, tt, z_1, z_2):
     fig = plt.figure()
     ax = fig.gca(projection="3d")
@@ -220,3 +225,14 @@ def volatility_surface_comparison(kk, tt, z_1, z_2):
     # blahblah
 
     plt.show()
+
+
+if __name__ == "__main__":
+    """Testing"""
+    S = 100
+    K = 100
+    tau = 0.5
+    r = 0.05
+    price = 10
+    iv = BS_IV(1, S, K, tau, r, price)
+    print(f"iv: {iv}, price: {10}, Price based on IV: {BS_call(S, K, tau, r, iv)}")

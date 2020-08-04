@@ -46,15 +46,15 @@ def read_data(file_name):
 
     drop_index = []
     for i in range(len(ndf)):
-        if (ndf["strike"][i] - spot_price) ** 2 > (0.02 * spot_price) ** 2:
+        if (ndf["strike"][i] - spot_price) ** 2 > (0.04 * spot_price) ** 2:
             drop_index.append(i)
 
     ndf = ndf.drop(drop_index).reset_index(drop=True)
     ndf = ndf.drop(ndf[ndf["price"] == 0].index)
 
-    # ndf = ndf.iloc[322:]
     return symbol, spot_price, ndf
 
 
-# symbol, spot_price, ndf = read_data('quotedata.dat')
-# print(ndf.head())
+if __name__ == "__main__":
+    symbol, spot_price, df = read_data('quotedata.dat')
+    print(df.head())
